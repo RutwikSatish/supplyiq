@@ -6,7 +6,7 @@ from groq import Groq
 import json
 
 st.set_page_config(
-    page_title="SupplyIQ | SC Risk Intelligence",
+    page_title="SupplyIQ: Supply Chain Risk Intelligence",
     page_icon="🏭",
     layout="wide"
 )
