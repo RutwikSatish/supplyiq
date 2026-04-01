@@ -6,7 +6,7 @@ from groq import Groq
 import json
 
 st.set_page_config(
-    page_title="SupplyIQ: Supply Chain Risk Intelligence",
+    page_title="SupplyIQ | SC Risk Intelligence",
     page_icon="🏭",
     layout="wide"
 )
@@ -278,7 +278,7 @@ Use exactly this structure:
 
 Be specific. Use supply chain terminology. No generic advice."""
     r = client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3, max_tokens=600,
     )
