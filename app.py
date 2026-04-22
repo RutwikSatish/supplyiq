@@ -163,14 +163,37 @@ hr { border-color: #21262d !important; }
 """, unsafe_allow_html=True)
 
 # ── PLOTLY DARK TEMPLATE ──────────────────────────────────────────────────────
+# DARK contains ONLY keys that will never be passed again in update_layout calls.
+# xaxis, yaxis, margin, legend are applied per-chart via update_xaxes/update_yaxes/dark_fig.
 DARK = dict(
     template="plotly_dark",
-    paper_bgcolor="#0a0e17", plot_bgcolor="#0d1117",
+    paper_bgcolor="#0a0e17",
+    plot_bgcolor="#0d1117",
     font=dict(color="#c9d1d9", family="IBM Plex Sans"),
-    xaxis=dict(gridcolor="#21262d", linecolor="#30363d", tickfont=dict(color="#8b949e")),
-    yaxis=dict(gridcolor="#21262d", linecolor="#30363d", tickfont=dict(color="#8b949e")),
-    margin=dict(t=36, b=44, l=12, r=12),
 )
+_XAXIS = dict(gridcolor="#21262d", linecolor="#30363d", tickfont=dict(color="#8b949e"))
+_YAXIS = dict(gridcolor="#21262d", linecolor="#30363d", tickfont=dict(color="#8b949e"))
+_LEGEND_H = dict(orientation="h", yanchor="bottom", y=1.02,
+                 font=dict(color="#c9d1d9", size=11), bgcolor="rgba(0,0,0,0)")
+
+def dark_fig(fig, height=400, margin=None, legend="off",
+             xtitle="", ytitle="", xangle=0):
+    """Apply consistent dark styling without any keyword conflicts."""
+    fig.update_layout(
+        **DARK,
+        height=height,
+        margin=margin or dict(t=36, b=44, l=12, r=12),
+        showlegend=(legend != "off"),
+        legend=(_LEGEND_H if legend == "h" else dict(bgcolor="rgba(0,0,0,0)")),
+        xaxis_title=xtitle,
+        yaxis_title=ytitle,
+    )
+    fig.update_xaxes(**_XAXIS)
+    fig.update_yaxes(**_YAXIS)
+    if xangle:
+        fig.update_xaxes(tickangle=xangle)
+    return fig
+
 COLOR_MAP = {"Critical": "#f85149", "At Risk": "#d29922", "Stable": "#3fb950"}
 
 # ── GROQ CLIENT ───────────────────────────────────────────────────────────────
@@ -404,9 +427,7 @@ with tab1:
     fig_scatter.add_hline(y=2.0, line_dash="dash", line_color="#30363d",
                           annotation_text="Defect threshold 2%",
                           annotation_font_color="#8b949e")
-    fig_scatter.update_layout(**DARK, height=400,
-                              legend=dict(orientation="h", yanchor="bottom", y=1.01,
-                                         font=dict(color="#c9d1d9", size=12)))
+    dark_fig(fig_scatter, height=400, legend="h")
     st.plotly_chart(fig_scatter, use_container_width=True)
 
     st.markdown('<div class="section-label" style="margin-top:8px">RANKED RISK REGISTER</div>', unsafe_allow_html=True)
@@ -496,9 +517,9 @@ with tab2:
                                   marker_color=col, opacity=0.9))
         fig_kpi.add_trace(go.Bar(name="Portfolio avg", x=labels, y=avg_vals,
                                   marker_color="#30363d"))
-        fig_kpi.update_layout(**DARK, height=200, barmode="group",
-                               legend=dict(orientation="h",y=1.1,font=dict(size=11)),
-                               margin=dict(t=20,b=30,l=0,r=0))
+        dark_fig(fig_kpi, height=200, legend="h",
+                 margin=dict(t=20, b=30, l=0, r=0))
+        fig_kpi.update_layout(barmode="group")
         st.plotly_chart(fig_kpi, use_container_width=True)
 
     st.markdown("---")
@@ -525,8 +546,7 @@ with tab3:
             x="Risk Score", y="Supplier", orientation="h",
             color="Risk Level", color_discrete_map=COLOR_MAP,
         )
-        fig_bar.update_layout(**DARK, height=420, showlegend=False,
-                               xaxis_title="Risk Score", yaxis_title="")
+        dark_fig(fig_bar, height=420, xtitle="Risk Score")
         st.plotly_chart(fig_bar, use_container_width=True)
     with cb:
         cat_risk = df.groupby("Category")["Risk Score"].mean().reset_index()
@@ -536,8 +556,8 @@ with tab3:
             color="Risk Score",
             color_continuous_scale=["#3fb950","#d29922","#f85149"],
         )
-        fig_cat.update_layout(**DARK, height=420, coloraxis_showscale=False,
-                               xaxis_title="", yaxis_title="Avg Risk Score")
+        dark_fig(fig_cat, height=420, ytitle="Avg Risk Score")
+        fig_cat.update_layout(coloraxis_showscale=False)
         st.plotly_chart(fig_cat, use_container_width=True)
 
     if st.button("Generate Portfolio AI Briefing", type="primary"):
@@ -558,8 +578,7 @@ with tab4:
         hover_data={"Component":True,"Category":True,"Risk Score":True},
         size=[14]*len(df), size_max=14,
     )
-    fig_exp.update_layout(**DARK, height=380,
-                           legend=dict(orientation="h",y=1.02,font=dict(size=12,color="#c9d1d9")))
+    dark_fig(fig_exp, height=380, legend="h")
     st.plotly_chart(fig_exp, use_container_width=True)
     st.markdown('<div class="section-label" style="margin-top:8px">SUMMARY STATISTICS BY RISK LEVEL</div>', unsafe_allow_html=True)
     st.dataframe(df.groupby("Risk Level")[kpi_opts].mean().round(2), use_container_width=True)
