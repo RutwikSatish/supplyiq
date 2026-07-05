@@ -4,34 +4,49 @@ SupplyIQ — Supply Chain Risk Intelligence Platform
 Built by Rutwik Satish | MS Engineering Management, Northeastern University
 
 WHY THIS EXISTS:
-  Manufacturing companies lose an average of $260,000 per hour during
-  unplanned production stoppages (Aberdeen Research). Most supplier failures
-  are detectable 2-3 weeks in advance — but only if you're monitoring the
-  right signals. Most teams aren't. They track suppliers manually in
-  spreadsheets and react after the line has already stopped.
+  Unplanned supplier disruptions are expensive and often caught late. Leading
+  indicators — slipping on-time delivery, rising lead time variance, thinning
+  inventory coverage — are frequently visible in the data before a delivery
+  is actually missed, but most teams track suppliers manually in spreadsheets
+  and only notice a problem once it has already caused a miss.
 
 WHAT IT DOES:
-  SupplyIQ monitors 4 KPIs that together predict supplier failure before it
-  happens: on-time delivery trend, defect rate, inventory coverage, and
-  lead time variance. It scores each supplier's failure probability,
-  classifies them as Stable / At Risk / Critical, and uses an AI model
-  to generate the same risk brief a senior SC analyst would write manually
-  in under 30 seconds instead of 3 hours.
+  SupplyIQ scores each supplier across 4 KPIs that together describe supply
+  risk: on-time delivery, defect rate, inventory coverage, and lead time
+  variance. It classifies each supplier as Stable / At Risk / Critical, shows
+  exactly which KPI drove the score, and uses an AI model to draft a
+  starting-point risk brief that a planner reviews and edits, not a final
+  answer.
 
 DATA:
-  Default dataset derived from 10,324 real USAID pharmaceutical supply chain
-  shipments (public domain). OTD % and lead time variance calculated from
-  actual delivery records. Defect rate estimated from OTD performance curve.
-  Upload your own CSV to run against your real supplier base.
+  Default view is a 30-vendor rollup built from the USAID SCMS Supply Chain
+  Shipment Pricing dataset (public domain, ~10,324 shipment records). On-time
+  delivery % and lead time variance % are calculated from scheduled vs.
+  delivered dates in that dataset. Defect rate and inventory coverage are NOT
+  present in the source data — they are clearly-labeled estimated placeholders
+  (see the Data & Methodology tab for exactly how, and why they should be
+  replaced with real data before this is used operationally).
+  Upload your own CSV to run this against a real supplier base.
 
 CHANGES FROM V1:
-  - Real data: USAID pharmaceutical supply chain (10,324 shipments, 30 vendors)
+  - Real data: USAID SCMS pharmaceutical supply chain rollup (30 vendors)
   - CSV upload: run against your own supplier data
   - Single-source override: always flags Critical regardless of KPI score
   - Score breakdown: shows exactly which KPIs contributed how many points
   - OTD trend field: captures direction not just snapshot
-  - Data quality transparency: clearly labels what is real vs estimated
+  - Data quality transparency: clearly labels what is real vs. estimated,
+    and removed a prior citation that overstated how well-sourced the
+    defect-rate estimate was
   - Updated copyright to 2026
+
+HONESTY NOTES (read before presenting this anywhere):
+  - The defect rate and inventory coverage numbers are placeholders, not
+    measured data. Say so plainly if asked.
+  - The scoring weights (35/30/25/10 points, the specific thresholds) are
+    a judgment call this tool's author made, not an external certified
+    standard. Be ready to explain the reasoning, not cite an authority.
+  - "Single Source" in the default dataset was flagged using a simple,
+    approximate rule, not a rigorously audited procurement analysis.
 
 STACK: Python · Streamlit · Plotly · Pandas · Groq (Llama 3, free)
 """
@@ -303,16 +318,29 @@ def get_template_csv() -> bytes:
     }])
     return example.to_csv(index=False).encode()
 
-# ── DEFAULT DATA (USAID real dataset) ─────────────────────────────────────────
+# ── DEFAULT DATA (USAID SCMS-derived rollup) ──────────────────────────────────
 @st.cache_data
 def load_default_data() -> pd.DataFrame:
     """
-    30 vendors derived from 10,324 real USAID pharmaceutical supply chain
-    shipments (public domain, SCMS Project).
-    OTD % and Lead Time Variance % calculated from actual scheduled vs
-    delivered dates. Defect Rate estimated from OTD performance curve
-    (inverse relationship, pharmaceutical SC benchmarks). Inventory Coverage
-    proxied from OTD tier. Single Source derived from category concentration.
+    30-vendor rollup built from the USAID SCMS Supply Chain Shipment Pricing
+    dataset (public domain, ~10,324 shipment records).
+
+    What's REAL (calculated directly from that dataset):
+      - On-Time Delivery (%) and Lead Time Variance (%), computed from
+        scheduled vs. delivered dates per vendor.
+
+    What's ESTIMATED (placeholder, no real data exists for these in the
+    source dataset — do not treat as measured):
+      - Defect Rate (%): approximated with a simple assumed inverse
+        relationship to On-Time Delivery. This is a rough stand-in, not a
+        validated clinical or industry benchmark, and should be replaced
+        with real SCAR/quality data before any operational use.
+      - Inventory Coverage (days): approximated from the OTD tier as a
+        rough proxy, since no stock-level data exists in the source dataset.
+
+    What's DERIVED (illustrative, not a rigorous procurement analysis):
+      - Single Source: a simple, approximate flag based on rough category
+        concentration, not an audited sourcing review.
     """
     return pd.DataFrame([
         {"Supplier":"SCMS from RDC","Component":"Efavirenz 600mg tablets","Category":"ARV","Country":"Nigeria","On-Time Delivery (%)":82.8,"Defect Rate (%)":4.18,"Inventory Coverage (days)":9,"Lead Time (days)":90,"Lead Time Variance (%)":0.0,"Open POs":20,"Single Source":False,"Last SCAR":"3 days ago"},
@@ -351,8 +379,17 @@ def load_default_data() -> pd.DataFrame:
 def compute_risk_score(row) -> tuple[int, dict]:
     """
     Returns (total_score, breakdown_dict) so score breakdown is always available.
-    Single-source suppliers are overridden to Critical (min score 60) regardless
-    of KPI performance — concentration risk cannot be offset by good KPIs.
+
+    NOTE ON THE WEIGHTS: 35/30/25/10 points and the specific thresholds below
+    are a judgment call made when building this tool — they reflect a
+    reasonable prioritization (on-time delivery and defect rate matter more
+    than short-term lead time wobble), not an external certified standard.
+    Be ready to explain the reasoning behind them, not cite an authority.
+
+    Single-source suppliers are overridden to Critical (min score 60)
+    regardless of KPI performance — concentration risk cannot be offset by
+    good KPIs. This override is also a deliberate design choice, not a
+    regulatory requirement.
     """
     breakdown = {}
     s = 0
@@ -403,7 +440,7 @@ def compute_risk_score(row) -> tuple[int, dict]:
     total = min(s, 100)
 
     # SINGLE SOURCE OVERRIDE: always Critical regardless of KPI health
-    # A stable single-source supplier still represents catastrophic concentration risk
+    # A stable single-source supplier still represents concentration risk
     if row["Single Source"] and total < 60:
         total = 60
         breakdown["_override"] = "Single-source floor applied (min 60)"
@@ -451,8 +488,10 @@ def get_ai_insight(supplier_data: dict, fleet: dict) -> str:
     client = get_client()
     if not client:
         return "Add GROQ_API_KEY to Streamlit secrets to enable AI briefs."
-    prompt = f"""You are a senior supply chain analyst at a Tier 1 manufacturer.
-Analyze this supplier KPI data and write a concise, actionable risk brief for a supply chain planning manager.
+    prompt = f"""You are a supply chain analyst drafting a FIRST-DRAFT risk brief for a
+planning manager to review and edit — not a final, verified analysis.
+
+Analyze this supplier KPI data and write a concise, actionable draft risk brief.
 
 SUPPLIER DATA:
 {json.dumps(supplier_data, indent=2)}
@@ -466,12 +505,14 @@ FLEET BENCHMARKS:
 Use exactly this structure:
 
 RISK SUMMARY — 2 sentences: primary risk and production impact
-ROOT CAUSE HYPOTHESIS — 1-2 sentences: most likely operational cause
+ROOT CAUSE HYPOTHESIS — 1-2 sentences: most likely operational cause (label this
+  clearly as a hypothesis to verify, not a confirmed cause)
 IMMEDIATE ACTIONS (3 bullet points with specific steps for this week)
 30-DAY MITIGATION PLAN (2 bullet points of tactical improvements)
 WATCH METRIC — 1 sentence: single KPI to monitor and escalation threshold
 
-Be specific. Use supply chain terminology. Plain text only."""
+Be specific. Use supply chain terminology. Plain text only. Do not state
+estimates or hypotheses as if they were confirmed facts."""
     r = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
@@ -488,7 +529,8 @@ def get_portfolio_insight(df: pd.DataFrame) -> str:
         ["Supplier","Component","On-Time Delivery (%)","Defect Rate (%)","Inventory Coverage (days)","Single Source"]
     ].to_dict(orient="records")
     risk = df[df["Risk Level"] == "At Risk"][["Supplier","Component","Risk Score"]].to_dict(orient="records")
-    prompt = f"""You are a supply chain director preparing a weekly risk briefing for senior leadership.
+    prompt = f"""You are drafting a FIRST-DRAFT weekly risk briefing for a supply chain
+leadership review — a starting point for discussion, not a final analysis.
 
 CRITICAL SUPPLIERS ({len(crit)}):
 {json.dumps(crit, indent=2)}
@@ -508,7 +550,8 @@ TOP 3 PRIORITY ACTIONS — ranked by urgency, one sentence each naming the suppl
 SINGLE-SOURCE EXPOSURE — 2 sentences on risk concentration
 RECOMMENDED PLANNING ADJUSTMENTS — 2 bullet points of specific parameter changes
 
-Write for VP-level audience. Be direct. Use numbers."""
+Write for a leadership audience. Be direct. Use numbers. Do not present
+estimates as verified facts."""
     r = client.chat.completions.create(
         model="llama3-8b-8192",
         messages=[{"role": "user", "content": prompt}],
@@ -550,7 +593,7 @@ color:#58a6ff;font-weight:600;margin-bottom:8px'>DATA SOURCE</div>
                 st.info("Download the template above for the correct format.")
                 df_raw = load_default_data()
                 using_real = True
-                data_label = "USAID Pharmaceutical SC"
+                data_label = "USAID SCMS rollup (demo data)"
             else:
                 df_raw = user_df
                 using_real = False
@@ -560,11 +603,11 @@ color:#58a6ff;font-weight:600;margin-bottom:8px'>DATA SOURCE</div>
             st.error(f"Could not read file: {e}")
             df_raw = load_default_data()
             using_real = True
-            data_label = "USAID Pharmaceutical SC"
+            data_label = "USAID SCMS rollup (demo data)"
     else:
         df_raw = load_default_data()
         using_real = True
-        data_label = "USAID Pharmaceutical SC"
+        data_label = "USAID SCMS rollup (demo data)"
 
 df = process_dataframe(df_raw)
 
@@ -578,9 +621,9 @@ st.markdown(f"""
   <h1 style="font-size:2rem;font-weight:600;margin:0;color:#f0f6fc;
   letter-spacing:-0.02em">SupplyIQ</h1>
   <p style="color:#8b949e;font-size:0.9rem;margin-top:4px;max-width:680px">
-    AI-powered supplier risk scoring and failure prediction. Surfaces at-risk
-    suppliers 2-3 weeks before disruption — the same analysis a senior SC analyst
-    performs manually, in under 30 seconds.
+    Supplier risk scoring built on leading KPIs instead of after-the-fact
+    delivery misses, with an AI-drafted first-pass risk brief that a planner
+    reviews and edits.
   </p>
   <p style="color:#8b949e;font-size:0.78rem;margin-top:6px">
     Active dataset: <span style="color:#c9d1d9;font-weight:500">{data_label}</span>
@@ -597,11 +640,9 @@ with st.expander("📋 The problem this solves — and how", expanded=False):
 <div class="problem-box">
 <div class="section-label">THE PROBLEM</div>
 <p style="font-size:0.88rem;line-height:1.7;margin:0">
-Manufacturing companies lose <strong style="color:#f85149">$260,000 per hour</strong>
-during unplanned production stoppages (Aberdeen Research). Supply chain planners
-at mid-size manufacturers monitor 20-80 suppliers simultaneously — manually, in
-spreadsheets. By the time a delivery failure appears in a weekly report, the
-production line is already at risk.
+Unplanned production stoppages are costly, and supply chain planners often
+track a large supplier base by hand in spreadsheets. By the time a delivery
+miss shows up in a weekly report, the production line may already be at risk.
 <br><br>
 Most teams are <strong style="color:#f85149">reactive, not predictive</strong>.
 </p>
@@ -610,19 +651,20 @@ Most teams are <strong style="color:#f85149">reactive, not predictive</strong>.
     with c2:
         st.markdown("""
 <div class="solution-box">
-<div class="section-label">HOW SUPPLYIQ SOLVES IT</div>
+<div class="section-label">HOW SUPPLYIQ HELPS</div>
 <p style="font-size:0.88rem;line-height:1.7;margin:0">
 SupplyIQ scores each supplier across <strong style="color:#3fb950">4 leading
-indicators</strong> that together predict failure 2-3 weeks before it becomes
-a production event:
+indicators</strong> that together describe supply risk before it becomes a
+production event:
 <br><br>
 • <strong>On-time delivery</strong> — primary leading indicator (max 35 pts)<br>
-• <strong>Defect rate</strong> — triggers SCAR escalation when breached (max 30 pts)<br>
-• <strong>Inventory coverage</strong> — below 7 days = immediate line risk (max 25 pts)<br>
+• <strong>Defect rate</strong> — quality signal that would trigger a SCAR in practice (max 30 pts)<br>
+• <strong>Inventory coverage</strong> — thin coverage raises production risk (max 25 pts)<br>
 • <strong>Lead time variance</strong> — instability signal even when averages look OK (max 10 pts)
 <br><br>
 Single-source suppliers are <strong style="color:#d29922">always flagged Critical</strong>
-regardless of KPI health — concentration risk cannot be offset by good performance.
+regardless of KPI health — a design choice, not an external rule, on the
+view that concentration risk shouldn't be offset by good performance.
 </p>
 </div>
 """, unsafe_allow_html=True)
@@ -631,18 +673,18 @@ regardless of KPI health — concentration risk cannot be offset by good perform
         st.markdown("""
 <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;
 padding:14px 20px;font-size:0.82rem;color:#8b949e;margin-top:8px">
-<strong style="color:#c9d1d9">Data transparency</strong> — Default dataset
-derived from 10,324 real USAID pharmaceutical supply chain shipments (public domain,
-SCMS Project Datasets).
+<strong style="color:#c9d1d9">Data transparency</strong> — Default view is a
+30-vendor rollup built from the USAID SCMS Supply Chain Shipment Pricing
+dataset (public domain, ~10,324 shipment records).
 <span class="data-badge badge-real">REAL</span> On-Time Delivery % and Lead Time
-Variance % are calculated directly from actual scheduled vs delivered dates.
-<span class="data-badge badge-est">ESTIMATED</span> Defect Rate modeled from OTD
-performance curve (pharmaceutical SC benchmarks).
-<span class="data-badge badge-est">ESTIMATED</span> Inventory Coverage proxied
-from OTD tier.
-<span class="data-badge badge-derived">DERIVED</span> Single Source flag from
-category concentration analysis.
-Upload your own CSV via the sidebar to run against your real supplier base.
+Variance % are calculated from scheduled vs. delivered dates in that dataset.
+<span class="data-badge badge-est">ESTIMATED</span> Defect Rate is a placeholder
+approximated from On-Time Delivery — not measured data.
+<span class="data-badge badge-est">ESTIMATED</span> Inventory Coverage is a
+placeholder proxied from the OTD tier — not measured data.
+<span class="data-badge badge-derived">DERIVED</span> Single Source is an
+illustrative flag, not an audited sourcing analysis.
+Upload your own CSV via the sidebar to run this against your real supplier base.
 </div>
 """, unsafe_allow_html=True)
 
@@ -742,7 +784,7 @@ with tab2:
             st.markdown("""
 <div class="single-source-alert">
 ⚠️ Single-source override applied — flagged Critical regardless of KPI score.
-Concentration risk cannot be offset by performance metrics.
+This tool's design choice: concentration risk isn't offset by good performance.
 </div>
 """, unsafe_allow_html=True)
 
@@ -768,7 +810,7 @@ Concentration risk cannot be offset by performance metrics.
                 unsafe_allow_html=True,
             )
 
-        # Score breakdown — new in v2
+        # Score breakdown
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown('<div class="section-label">SCORE BREAKDOWN</div>', unsafe_allow_html=True)
         score_items = [
@@ -845,9 +887,9 @@ Concentration risk cannot be offset by performance metrics.
         st.plotly_chart(fig_kpi, use_container_width=True)
 
     st.markdown("---")
-    st.markdown('<div class="section-label">AI RISK BRIEF</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">AI RISK BRIEF (DRAFT — REVIEW BEFORE USING)</div>', unsafe_allow_html=True)
     st.markdown(
-        "<p style='color:#8b949e;font-size:0.8rem;margin-top:0'>Powered by Groq · Llama 3.1 · Free API</p>",
+        "<p style='color:#8b949e;font-size:0.8rem;margin-top:0'>Drafted by Groq · Llama 3.1 — a starting point to edit, not a verified analysis.</p>",
         unsafe_allow_html=True,
     )
 
@@ -861,19 +903,19 @@ Concentration risk cannot be offset by performance metrics.
         d = row.drop(["_breakdown"]).to_dict()
         d = {k: (bool(v) if isinstance(v, bool) else (int(v) if hasattr(v, "item") else v))
              for k, v in d.items()}
-        with st.spinner("Analysing KPI patterns and generating brief..."):
+        with st.spinner("Analysing KPI patterns and drafting brief..."):
             brief = get_ai_insight(d, fleet)
         st.markdown(f'<div class="ai-block">{brief}</div>', unsafe_allow_html=True)
 
 # ── TAB 3: PORTFOLIO AI BRIEFING ──────────────────────────────────────────────
 with tab3:
-    st.markdown('<div class="section-label">PORTFOLIO-LEVEL EXECUTIVE BRIEFING</div>',
+    st.markdown('<div class="section-label">PORTFOLIO-LEVEL BRIEFING (DRAFT)</div>',
                 unsafe_allow_html=True)
     st.markdown(
         "<p style='color:#8b949e;font-size:0.82rem;margin-top:0'>"
-        "VP-level summary across all critical and at-risk suppliers. "
-        "Same analysis your SC director would prepare for Monday morning's review — "
-        "generated in seconds.</p>",
+        "A first-draft summary across all critical and at-risk suppliers, "
+        "structured the way a leadership review would be organized — meant "
+        "to be reviewed and edited, not used as a final analysis.</p>",
         unsafe_allow_html=True,
     )
 
@@ -899,7 +941,7 @@ with tab3:
         st.plotly_chart(fig_cat, use_container_width=True)
 
     if st.button("Generate Portfolio AI Briefing", type="primary"):
-        with st.spinner("Building executive risk summary..."):
+        with st.spinner("Building draft portfolio summary..."):
             brief = get_portfolio_insight(df)
         st.markdown(f'<div class="ai-block">{brief}</div>', unsafe_allow_html=True)
 
@@ -945,10 +987,16 @@ Each supplier is scored 0-100 across four KPI dimensions. Scores at or above 60 
 <span style="color:#3fb950;font-weight:600">Stable</span>.
 <br><br>
 <strong>Single-source suppliers are always classified Critical</strong> regardless of
-KPI score. A single-source supplier with perfect OTD still represents catastrophic
-concentration risk — one disruption event stops the line with zero backup options.
-The +10 point premium in previous versions was insufficient to capture this; the v2
-scoring applies a hard floor of 60 (Critical threshold) to all single-source suppliers.
+KPI score. This reflects the view that a single-source supplier with perfect OTD
+still represents concentration risk — one disruption event stops the line with
+zero backup options. Earlier drafts of this scoring used only a +10 point premium
+for single-source status; that was judged insufficient to capture the risk, so
+this version applies a hard floor of 60 (Critical) instead.
+<br><br>
+<strong style="color:#d29922">These weights and thresholds are this tool's own
+design choice</strong> — a reasonable prioritization, not a certified industry
+or regulatory standard. If asked to defend a specific number, the honest answer
+is "this is the weighting I judged appropriate," not a citation.
 </div>
 """, unsafe_allow_html=True)
 
@@ -956,10 +1004,10 @@ scoring applies a hard floor of 60 (Critical threshold) to all single-source sup
         ["On-time delivery", "Below 70%",     "+35 pts", "Primary leading indicator of disruption"],
         ["On-time delivery", "70-84%",        "+20 pts", ""],
         ["On-time delivery", "85-91%",        "+8 pts",  ""],
-        ["Defect rate",      "Above 4%",      "+30 pts", "Triggers SCAR workflow at threshold"],
+        ["Defect rate",      "Above 4%",      "+30 pts", "Would typically trigger a SCAR-style review"],
         ["Defect rate",      "2-4%",          "+18 pts", ""],
         ["Defect rate",      "1-2%",          "+8 pts",  ""],
-        ["Inventory coverage","Below 5 days", "+25 pts", "Immediate production stoppage risk"],
+        ["Inventory coverage","Below 5 days", "+25 pts", "Thin coverage raises production risk"],
         ["Inventory coverage","5-9 days",     "+14 pts", ""],
         ["Inventory coverage","10-13 days",   "+6 pts",  ""],
         ["Lead time variance","Above 40%",    "+10 pts", "High variance = process instability"],
@@ -975,31 +1023,32 @@ scoring applies a hard floor of 60 (Critical threshold) to all single-source sup
 <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;
 padding:16px 20px;font-size:0.83rem;line-height:1.8;color:#c9d1d9;margin-bottom:12px">
 <strong style="color:#f0f6fc">Source:</strong> USAID SCMS Project Supply Chain Shipment
-Pricing Dataset — 10,324 shipments, 73 vendors, public domain.
+Pricing dataset — approximately 10,324 shipment records, public domain. This app's
+default view is a 30-vendor rollup built from that dataset for demonstration purposes.
 <br><br>
 <span class="data-badge badge-real">REAL</span>
-<strong>On-Time Delivery %</strong> — calculated from actual scheduled delivery date
-vs delivered to client date across all shipments per vendor. Vendors with fewer than
-10 shipments excluded.
+<strong>On-Time Delivery %</strong> — calculated from scheduled delivery date
+vs. delivered-to-client date, aggregated per vendor.
 <br><br>
 <span class="data-badge badge-real">REAL</span>
 <strong>Lead Time Variance %</strong> — standard deviation of lead time (PO sent to
-delivered) divided by mean lead time, per vendor. Negative lead times (data entry
-errors) removed before calculation.
+delivered) divided by mean lead time, per vendor.
 <br><br>
-<span class="data-badge badge-est">ESTIMATED</span>
-<strong>Defect Rate %</strong> — no quality data exists in this dataset. Modeled from
-OTD performance using an inverse relationship aligned to pharmaceutical supply chain
-benchmarks (ICH Q10). If challenged: "Estimated from OTD proxy; replace with actual
-SCAR data for production use."
+<span class="data-badge badge-est">ESTIMATED — PLACEHOLDER</span>
+<strong>Defect Rate %</strong> — no quality/defect data exists in this dataset.
+Approximated using a simple assumed inverse relationship with on-time delivery.
+This is a rough placeholder, not a validated clinical or industry benchmark —
+replace with real SCAR/quality data before using this operationally.
 <br><br>
-<span class="data-badge badge-est">ESTIMATED</span>
-<strong>Inventory Coverage (days)</strong> — company-specific data unavailable in any
-public dataset. Proxied from OTD tier. Replace with real stock data for accurate scoring.
+<span class="data-badge badge-est">ESTIMATED — PLACEHOLDER</span>
+<strong>Inventory Coverage (days)</strong> — company-specific stock data is not
+available in any public dataset used here. Approximated from the OTD tier as a
+rough stand-in. Replace with real inventory data for accurate scoring.
 <br><br>
-<span class="data-badge badge-derived">DERIVED</span>
-<strong>Single Source flag</strong> — vendors supplying more than 80% of their primary
-product category classified as effectively single-source.
+<span class="data-badge badge-derived">DERIVED — ILLUSTRATIVE</span>
+<strong>Single Source flag</strong> — approximated from rough category
+concentration in the source data for demonstration; treat as illustrative,
+not an audited procurement analysis.
 </div>
 """, unsafe_allow_html=True)
 
@@ -1035,7 +1084,7 @@ st.markdown(
     "<p style='font-size:0.75rem;color:#484f58;text-align:center'>"
     "SupplyIQ · Supply Chain Risk Intelligence · "
     "Data: USAID SCMS Project (public domain) · "
-    "AI by Groq (Llama 3.1, free) · "
+    "AI drafting by Groq (Llama 3.1, free) · "
     "Built by Rutwik Satish · MS Engineering Management, Northeastern University · "
     "© 2026"
     "</p>",
